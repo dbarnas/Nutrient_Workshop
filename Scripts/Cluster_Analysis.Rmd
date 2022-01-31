@@ -1,0 +1,325 @@
+### Clustering Analysis
+
+
+Load Libraries
+```{r, warning = FALSE}
+
+library(tidyverse)
+library(VarSelLCM) # LCM
+library(ggmap)
+library(PNWColors)
+library(here)
+ 
+API<-names(read_table(here("Data","API.txt")))
+register_google(key = API) ### uses my API in separate txt file
+```
+
+Read in Data
+```{r, echo = FALSE}
+## Read in data
+Data<-read_csv("https://raw.githubusercontent.com/njsilbiger/NutrientRegimes/main/Data/NutrientAll.csv")
+
+meta<-read_csv(here("Data","islandwide_sites_allMetadata.csv"))
+```
+
+
+Clean Data for analysis
+```{r}
+## Force type data.frame
+class(Data) = "data.frame" 
+class(meta) = "data.frame"
+
+
+## Select useful columns from metadata
+## Drop NA's from the dataset
+cleanMeta <- meta %>% 
+  select(c(Site, Latitude, Longitude, Island_shore, Habitat)) %>% 
+  drop_na() %>%
+  rename(Site_Number = "Site",
+         Lat = "Latitude",
+         Lon = "Longitude")
+cleanMeta
+```
+
+
+Remove outlier silicate values from May and August (will add in during mapping later as a separate cluster) and join with metadata
+```{r}
+## remove outlier silicate values
+cleanData<-Data %>% 
+  filter(Silicate_May < 1.5,
+         Silicate_August < 1.5) %>% 
+  dplyr::select(-c(Lat, Lon, Date_May, Time_May))
+
+## parse into character vecter
+cleanData$Site_Number<-as.character(cleanData$Site_Number)
+
+## join with metadata by site number
+cleanData<-cleanData %>% 
+  dplyr::left_join(cleanMeta, 
+                   by = c('Site_Number')) %>% 
+  unite("Shore_Habitat", Island_shore, Habitat, sep = "_", remove = T) # unite the shore and habitat information as one column
+
+cleanData
+
+```
+
+
+Log Transform and Scale the data
+```{r}
+## log transform
+logData <- cleanData %>%
+  select_if(is.numeric) %>% 
+  select(-c("Lat","Lon")) %>% 
+  mutate_all(.funs = ~log(.x + 0.01))
+
+## scale data
+logData <- scale(logData,center=T,scale=T)
+
+```
+
+
+
+- Clustering is done with and without variable selection. Here ICL and MICL criteria are used because the number of observations is less than the number of features (thus, BIC is not relevant).
+```{r}
+### Taking from the VarSelLCM.R script
+
+# Please indicate the number of cores you want to use for parallelization
+nb.CPU <- 4 # cores on my computer dedicated to the process (want to use like half)
+
+
+```
+
+# Mixed-type data analysis
+## Clustering
+This section performs the whole analysis of the *nutrient* data set. 
+
+*Warning the univariate margin distribution are defined by class of the features: numeric columns imply Gaussian distributions, integer columns imply Poisson distribution while factor (or ordered) columns imply multinomial distribution*
+```{r, comment=""}
+
+# Data loading:
+# x contains the observed variables
+# z the known status (i.e. 1: near and 2: far from shore)
+
+class(logData) = "data.frame" # force type data.frame 
+
+ztrue <- cleanData[,15]
+x <- logData[,1:10]
+
+```
+
+
+Clustering is performed with variable selection. 
+Model selection is done with BIC because the number of observations is large (compared to the number of features).
+The number of components is between 1 and 3.
+Do not hesitate to use parallelization (here only four cores are used).
+
+```{r, comment=""}
+# Cluster analysis without variable selection
+res_without <- VarSelCluster(x, # matrix/data frame (only the numerical data for now) 
+                             gvals = 1:10, # defines number of components (clusters) to consider
+                             vbleSelec = FALSE, # indicates if a variable selection is done
+                             crit.varsel = "BIC") # defines the info criterion used for model selection
+
+# Cluster analysis with variable selection (with parallelization)
+res_with <- VarSelCluster(x, 
+                          gvals = 1:10, 
+                          vbleSelec = TRUE, # indicates if a variable selection is done 
+                          crit.varsel = "BIC")
+
+summary(res_without)
+summary(res_with)
+
+```
+
+Comparison of the BIC for both models: variable selection permits to improve the BIC
+```{r, comment=""}
+BIC(res_without) # this is lower
+BIC(res_with) 
+```
+
+
+
+Evaluation of the partition accuracy: Adjusted Rand Index (ARI) is computed between the true partition (ztrue) and its estimators.
+The expectation of ARI is zero if the two partitions are independent. 
+The ARI is equal to one if the partitions are equals.
+Variable selection permits to improve the ARI.
+Note that ARI cannot be used for model selection in clustering, because there is no true partition.
+
+Partition near 0 indicates that the clusters are very related to the shore_habitat factors we related the matrix to.
+Can compare other factors in the future (ie. bacteria communities or coral counts, etc.)
+```{r, comment=""}
+ARI(ztrue, fitted(res_without))
+ARI(ztrue, fitted(res_with))
+```
+
+To obtained the partition and the probabilities of classification
+```{r, comment=""}
+# Estimated partition
+cluster<-fitted(res_with)
+
+# Estimated probabilities of classification
+head(fitted(res_with, type="probability"))
+```
+
+To get a summary of the selected model.
+```{r, comment=""}
+# Summary of the best model
+summary(res_with)
+summary(cluster)
+```
+
+
+Distribution of the most discriminative variable per clusters
+```{r, comment=""}
+# Boxplot for the continuous variable MaxHeartRate
+plot(x=res_with, y=1:10)
+```
+
+Empirical and theoretical distributions of the most discriminative variable (to check that the distribution is well-fitted)
+```{r, comment=""}
+# Empirical and theoretical distributions (to check that the distribution is well-fitted)
+plot(res_with, y="Silicate_May", type="cdf")
+plot(res_with, y="Silicate_August", type="cdf")
+plot(res_with, y="Ammonia_August", type="cdf")
+plot(res_with, y="Ammonia_May", type="cdf")
+```
+
+Distribution of a categorical variable per clusters
+(when we have categorical)
+```{r, comment=""}
+# Summary of categorical variable
+# plot(res_with, y="Shore_Habitat")
+```
+
+To have details about the selected model
+```{r, comment=""}
+# More detailed output
+print(res_with)
+```
+
+To print the parameters
+```{r, comment=""}
+# Print model parameter
+coef(res_with)
+```
+
+Probabilities of classification for new observations 
+(I don't know what this is)
+```{r, comment=""}
+# Probabilities of classification for new observations 
+# predict(res_without, newdata = x[1:3,])
+```
+
+
+
+### Graph
+
+Add site locations to cluster value df
+```{r}
+cluster<-as.data.frame(cluster)
+
+newcleanMeta<-cleanMeta %>% 
+  select(Site_Number,
+         Lat,
+         Lon)
+clusterData<-cleanData %>% 
+  cbind(cluster) %>% 
+  left_join(cleanMeta) %>% 
+  drop_na() %>% 
+  mutate(cluster = as.factor(cluster))
+```  
+
+*Map Clusters*
+```{r}
+## create separate df for high silicate values
+silicateData <- Data %>% 
+  filter(Silicate_May >= 1.5) %>% 
+  filter(Silicate_August >= 1.5) %>% 
+  drop_na()
+
+  ### Map clusters
+moorea <- data.frame(lon = -149.84, lat = -17.53) #set map coordinates
+map1 <- get_map(moorea, zoom = 12, maptype = "satellite") #set map zoom and type
+
+cluster_map <- ggmap(map1) +
+  geom_point(data = silicateData, 
+             aes(x=Lon, y = Lat), 
+             color = "white",
+             size = 3) +
+  geom_point(data = clusterData,
+             aes(x = Lon, y = Lat,
+                 color = cluster),
+            size = 3) + # set alpha and color aesthetics
+  # scale_color_manual(values = pnw_palette("Moth", 4)) +
+  labs(x = "Longitude", y = "Latitude")  #label x and y axes
+ggsave(here("Output","Map_w_VariableSelection.png"),cluster_map,height = 10, width = 10)
+
+cluster_map
+
+```
+
+
+*Create boxplot faceted by clusters*
+```{r}
+
+### Create boxplot faceted by clusters
+#First, pivot longer
+full_data1_longer <- clusterData %>%
+  pivot_longer(cols = c(2:11),
+               names_to = "Nut_parameters",
+               values_to = "Nut_values")
+
+mybox<-ggplot(full_data1_longer, mapping = aes(x = Nut_parameters,
+                                 y= Nut_values + .1, color = cluster)) +
+  geom_boxplot()+
+  coord_trans(y = "log") +
+  facet_wrap(~cluster)  +
+  ylab("Concentration") +
+  xlab("") +
+  # scale_color_manual(values = pnw_palette("Moth", 5)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = -.1))
+ggsave(here("Output","Boxplots_w_VariableSelection.png"), mybox, height = 10, width = 8)
+  
+mybox
+
+```
+
+
+
+
+
+Other cluster analysis considerations
+
+Following youtube to get a practice dataset (nevermind, used LCM)
+- following youtube: https://www.youtube.com/watch?v=0qp7p98Su6U
+- practice<-read_csv("https://www.kaggle.com/carolzhangdc/imdb-5000-movie-dataset?select=movie_metadata.csv")
+```{r}
+# ## following youtube: https://www.youtube.com/watch?v=0qp7p98Su6U
+# practice<-read_csv("https://www.kaggle.com/carolzhangdc/imdb-5000-movie-dataset?select=movie_metadata.csv")
+# 
+# practice<-practice %>% 
+#   practice[,sapply(practice,is.numeric)|sapply(practice,)]
+# 
+# 
+# ## Daisy()
+# daisy(practice,metric = "manhattan") # this isn't giving what I expected
+
+```
+
+
+Let's try UET dissimilarities using treeClust (nevermind, used LCM)
+```{r}
+# cleanData
+# 
+# a<-treeClust(cleanData, 
+#           d.num = 4,
+#           control = treeClust.control(return.trees = TRUE,
+#                                       return.dists = TRUE),
+#           final.algorithm = "pam", 
+#           k = 10)
+# plot(a)
+# summary(a)
+```
+
+
+
