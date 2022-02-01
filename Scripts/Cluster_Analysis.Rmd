@@ -1,8 +1,11 @@
 ### Clustering Analysis
 
+---
+output: html_document
+---
 
 Load Libraries
-```{r, warning = FALSE}
+```{r, warning = FALSE, echo=F}
 
 library(tidyverse)
 library(VarSelLCM) # LCM
@@ -12,10 +15,12 @@ library(here)
  
 API<-names(read_table(here("Data","API.txt")))
 register_google(key = API) ### uses my API in separate txt file
+
+set.seed(7) # set the seed to get the same one every time
 ```
 
 Read in Data
-```{r, echo = FALSE}
+```{r, warning = FALSE, echo=F}
 ## Read in data
 Data<-read_csv("https://raw.githubusercontent.com/njsilbiger/NutrientRegimes/main/Data/NutrientAll.csv")
 
@@ -65,7 +70,7 @@ cleanData
 
 
 Log Transform and Scale the data
-```{r}
+```{r, warning = FALSE, echo=F}
 ## log transform
 logData <- cleanData %>%
   select_if(is.numeric) %>% 
@@ -80,7 +85,7 @@ logData <- scale(logData,center=T,scale=T)
 
 
 - Clustering is done with and without variable selection. Here ICL and MICL criteria are used because the number of observations is less than the number of features (thus, BIC is not relevant).
-```{r}
+```{r, warning = FALSE, echo=F}
 ### Taking from the VarSelLCM.R script
 
 # Please indicate the number of cores you want to use for parallelization
@@ -94,13 +99,13 @@ nb.CPU <- 4 # cores on my computer dedicated to the process (want to use like ha
 This section performs the whole analysis of the *nutrient* data set. 
 
 *Warning the univariate margin distribution are defined by class of the features: numeric columns imply Gaussian distributions, integer columns imply Poisson distribution while factor (or ordered) columns imply multinomial distribution*
-```{r, comment=""}
+```{r, warning = FALSE, echo=F,}
 
 # Data loading:
 # x contains the observed variables
 # z the known status (i.e. 1: near and 2: far from shore)
 
-class(logData) = "data.frame" # force type data.frame 
+#class(logData) = "data.frame" # force type data.frame 
 
 ztrue <- cleanData[,15]
 x <- logData[,1:10]
@@ -133,8 +138,8 @@ summary(res_with)
 
 Comparison of the BIC for both models: variable selection permits to improve the BIC
 ```{r, comment=""}
-BIC(res_without) # this is lower
-BIC(res_with) 
+BIC(res_without) 
+BIC(res_with) # this is lower
 ```
 
 
@@ -172,7 +177,10 @@ summary(cluster)
 Distribution of the most discriminative variable per clusters
 ```{r, comment=""}
 # Boxplot for the continuous variable MaxHeartRate
-plot(x=res_with, y=1:10)
+desplot <- plot(x=res_with, y=1:10)
+par(bg="white")
+#ggsave(here("Output","DiscriminativePowerBarnas.png"),desplot, height = 10, width = 10)
+desplot
 ```
 
 Empirical and theoretical distributions of the most discriminative variable (to check that the distribution is well-fitted)
@@ -251,7 +259,8 @@ cluster_map <- ggmap(map1) +
                  color = cluster),
             size = 3) + # set alpha and color aesthetics
   # scale_color_manual(values = pnw_palette("Moth", 4)) +
-  labs(x = "Longitude", y = "Latitude")  #label x and y axes
+  labs(x = "Longitude", y = "Latitude",  #label x and y axes
+        title = "LCM, Na's omitted, Variables Selected \n Danielle Barnas")
 ggsave(here("Output","Map_w_VariableSelection.png"),cluster_map,height = 10, width = 10)
 
 cluster_map
@@ -278,7 +287,7 @@ mybox<-ggplot(full_data1_longer, mapping = aes(x = Nut_parameters,
   xlab("") +
   # scale_color_manual(values = pnw_palette("Moth", 5)) +
   theme(axis.text.x = element_text(angle = 90, vjust = -.1))
-ggsave(here("Output","Boxplots_w_VariableSelection.png"), mybox, height = 10, width = 8)
+#ggsave(here("Output","Boxplots_w_VariableSelection.png"), mybox, height = 10, width = 8)
   
 mybox
 
